@@ -1,0 +1,10 @@
+[package]
+name = "openapi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7.7"
+tokio = { version = "1.41.1", features = ["full"] }
+utoipa = {version = "5.2.0", features = ["axum_extras"]}
+utoipa-swagger-ui = {version = "8.0.3", features = ["axum", "vendored"], default-features = false }
