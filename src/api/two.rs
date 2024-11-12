@@ -1,12 +1,12 @@
 use utoipa::OpenApi;
 
 #[derive(OpenApi)]
-#[openapi(paths(get_one))]
-pub(crate) struct OneApi;
+#[openapi(paths(get_two))]
+pub(crate) struct TwoApi;
 
 #[utoipa::path(
     get,
-    path = "/one",
+    path = "/two",
     responses(
         (
             status = OK,
@@ -15,6 +15,6 @@ pub(crate) struct OneApi;
         )
     )
 )]
-pub(crate) async fn get_one() -> &'static str {
-    "one"
+pub(crate) async fn get_two() -> &'static str {
+    "two"
 }
