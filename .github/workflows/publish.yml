@@ -12,7 +12,7 @@ env:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
       run: cargo test --verbose
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest 
     needs: build
     steps:
       - name: Checkout source
