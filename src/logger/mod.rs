@@ -1,3 +1,5 @@
+pub mod metrics_builder;
+
 use axum::{routing::get, Router};
 use prometheus::{
     register_counter, Counter, Encoder, Histogram, HistogramOpts, IntCounter, IntGauge, Registry,
