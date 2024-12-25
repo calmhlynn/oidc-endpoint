@@ -40,7 +40,7 @@ async fn main() -> Result<(), io::Error> {
         .route_layer(middleware::from_fn(track_metrics));
     // .nest("/metrics", prometheus_router().await);
 
-    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8888));
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
     let listener = TcpListener::bind(&address).await?;
     axum::serve(listener, app.into_make_service()).await
 }
