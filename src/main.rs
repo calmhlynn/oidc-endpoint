@@ -1,5 +1,4 @@
 pub mod logger;
-pub mod util;
 
 use std::{
     future::ready,
@@ -9,7 +8,6 @@ use std::{
 use axum::{middleware, routing::get, Router};
 use logger::metrics_builder::{recorder_builder, track_metrics};
 use tokio::{io, net::TcpListener};
-use util::jwt::SecurityAddon;
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
