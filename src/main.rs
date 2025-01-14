@@ -2,23 +2,34 @@ pub mod auth;
 pub mod logger;
 
 use std::{
-    collections::HashMap,
     future::ready,
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
 };
 
-use auth::handler::{callback, login, protected};
-use axum::{extract::FromRef, middleware, routing::get, Router};
-use axum_extra::extract::cookie::Key;
+use auth::{
+    endpoints::{callback, login, logout, protected},
+    handler::AppState,
+};
+use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
 use dotenvy::dotenv;
 use logger::metrics_builder::{recorder_builder, track_metrics};
-use tokio::{io, net::TcpListener, sync::Mutex};
+use tokio::{io, net::TcpListener};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
-    dotenv();
+    let _ = dotenv();
+
+    tracing_subscriber::fmt().init();
+
+    info!("Starting the application...");
     let metrics_handler = recorder_builder();
+
+    let app_store = AppState::new();
 
     let app = Router::new()
         .route("/", get(root))
@@ -26,7 +37,8 @@ async fn main() -> Result<(), io::Error> {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/protected", get(protected))
-        .with_state(AppState::new())
+        .route("/auth/logout", get(logout))
+        .with_state(app_store)
         .route_layer(middleware::from_fn(track_metrics));
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
@@ -36,25 +48,4 @@ async fn main() -> Result<(), io::Error> {
 
 async fn root() -> &'static str {
     "root"
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub sessions: Arc<Mutex<HashMap<String, String>>>,
-    pub key: Key,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        AppState {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            key: Key::generate(),
-        }
-    }
-}
-
-impl FromRef<AppState> for Key {
-    fn from_ref(state: &AppState) -> Self {
-        state.key.clone()
-    }
 }

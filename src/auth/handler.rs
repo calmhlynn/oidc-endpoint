@@ -1,24 +1,18 @@
-use std::env;
-
-use axum::http::StatusCode;
-use axum::response::Html;
-use axum::{
-    extract::{Query, State},
-    response::{IntoResponse, Redirect},
+use axum::{extract::FromRef, http::StatusCode};
+use axum_extra::extract::cookie::Key;
+use deadpool_redis::{
+    redis::{pipe, AsyncCommands, ErrorKind, RedisError, RedisResult},
+    Config, Pool, Runtime,
 };
-use axum_extra::extract::{cookie::Cookie, PrivateCookieJar};
-use oauth2::reqwest::async_http_client;
 use oauth2::{
-    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
-    Scope, TokenUrl,
+    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenUrl,
 };
-use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
 use once_cell::sync::Lazy;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, env};
+use tracing::info;
 use uuid::Uuid;
-
-use crate::AppState;
 
 static KEYCLOAK_AUTH_SERVER_URL: Lazy<String> =
     Lazy::new(|| env::var("KEYCLOAK_AUTH_SERVER_URL").unwrap());
@@ -28,162 +22,244 @@ static KEYCLOAK_CLIENT_SECRET: Lazy<String> =
     Lazy::new(|| env::var("KEYCLOAK_CLIENT_SECRET").unwrap());
 static CALLBACK_URL: Lazy<String> = Lazy::new(|| env::var("CALLBACK_URL").unwrap());
 
-pub(crate) async fn login(
-    State(app_state): State<AppState>,
-    jar: PrivateCookieJar,
-) -> impl IntoResponse {
-    let auth_url = format!(
-        "{}/realms/{}/protocol/openid-connect/auth",
-        *KEYCLOAK_AUTH_SERVER_URL, *KEYCLOAK_REALM
-    );
-    let token_url = format!(
-        "{}/realms/{}/protocol/openid-connect/token",
-        *KEYCLOAK_AUTH_SERVER_URL, *KEYCLOAK_REALM
-    );
+#[derive(Clone)]
+pub struct OidcConfig {
+    pub auth_server_url: String,
+    pub realm: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub callback_url: String,
+}
 
-    let client = BasicClient::new(
-        ClientId::new(KEYCLOAK_CLIENT_ID.clone()),
-        Some(ClientSecret::new(KEYCLOAK_CLIENT_SECRET.clone())),
-        AuthUrl::new(auth_url).unwrap(),
-        Some(TokenUrl::new(token_url).unwrap()),
-    )
-    .set_redirect_uri(RedirectUrl::new(CALLBACK_URL.clone()).unwrap());
+#[derive(Clone)]
+pub struct AppState {
+    pub redis_pool: Pool,
+    pub key: Key,
+}
+impl FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.key.clone()
+    }
+}
 
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    let (authorize_url, csrf_state) = client
-        .authorize_url(CsrfToken::new_random)
-        .set_pkce_challenge(pkce_challenge)
-        .add_scope(Scope::new("openid".to_string()))
-        .url();
+impl AppState {
+    pub fn new() -> Self {
+        let redis_cfg = Config::from_url(env::var("REDIS_URL").unwrap());
+        let redis_pool = redis_cfg.create_pool(Some(Runtime::Tokio1)).unwrap();
 
-    println!("Browse authorized URL: {}", authorize_url);
+        AppState {
+            redis_pool,
+            key: Key::generate(),
+        }
+    }
+}
 
-    let session_data = json!({
-        "pkce_verifier": pkce_verifier.secret(),
-        "csrf_state": csrf_state.secret()
-    })
-    .to_string();
+pub struct OidcFlow {
+    pub config: OidcConfig,
+}
 
-    let session_id = Uuid::new_v4().to_string();
+impl Default for OidcFlow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    {
-        let mut sessions = app_state.sessions.lock().await;
-        sessions.insert(session_id.clone(), session_data);
+impl OidcFlow {
+    pub fn new() -> Self {
+        let config = OidcConfig {
+            auth_server_url: KEYCLOAK_AUTH_SERVER_URL.to_string(),
+            realm: KEYCLOAK_REALM.to_string(),
+            client_id: KEYCLOAK_CLIENT_ID.to_string(),
+            client_secret: KEYCLOAK_CLIENT_SECRET.to_string(),
+            callback_url: CALLBACK_URL.to_string(),
+        };
+
+        OidcFlow { config }
     }
 
-    let jar = jar.add(Cookie::new("session_id", session_id));
-
-    (jar, Redirect::to(authorize_url.as_str()))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AuthRequest {
-    code: String,
-    state: String,
-}
-
-pub(crate) async fn callback(
-    Query(query): Query<AuthRequest>,
-    State(app_state): State<AppState>,
-    jar: PrivateCookieJar,
-) -> Result<(PrivateCookieJar, Redirect), (StatusCode, String)> {
-    let session_id = match jar.get("session_id") {
-        Some(c) => c.value().to_owned(),
-        None => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Missing session_id cookie. Please login first.".to_string(),
-            ))
-        }
-    };
-
-    let session_json = {
-        let sessions = app_state.sessions.lock().await;
-        sessions.get(&session_id).cloned()
-    };
-
-    let session_json = match session_json {
-        Some(s) => s,
-        None => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Session not found. Possibly expired or invalid session_id".to_string(),
-            ))
-        }
-    };
-    let session_data: Value = serde_json::from_str(&session_json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse session JSON: {}", e),
+    pub fn logout_url() -> String {
+        format!(
+            "{}/realms/{}/protocol/openid-connect/logout",
+            *KEYCLOAK_AUTH_SERVER_URL, *KEYCLOAK_REALM,
         )
-    })?;
-
-    let stored_pkce = session_data["pkce_verifier"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    let stored_state = session_data["csrf_state"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-
-    if stored_state != query.state {
-        return Err((StatusCode::UNAUTHORIZED, "CSRF state mismatch.".into()));
     }
 
-    let auth_url = format!(
-        "{}/realms/{}/protocol/openid-connect/auth",
-        *KEYCLOAK_AUTH_SERVER_URL, *KEYCLOAK_REALM
-    );
-    let token_url = format!(
-        "{}/realms/{}/protocol/openid-connect/token",
-        *KEYCLOAK_AUTH_SERVER_URL, *KEYCLOAK_REALM
-    );
+    pub fn create_client(&self) -> BasicClient {
+        let auth_url = format!(
+            "{}/realms/{}/protocol/openid-connect/auth",
+            self.config.auth_server_url, self.config.realm
+        );
+        let token_url = format!(
+            "{}/realms/{}/protocol/openid-connect/token",
+            self.config.auth_server_url, self.config.realm
+        );
 
-    let client = BasicClient::new(
-        ClientId::new(KEYCLOAK_CLIENT_ID.clone()),
-        Some(ClientSecret::new(KEYCLOAK_CLIENT_SECRET.clone())),
-        AuthUrl::new(auth_url).unwrap(),
-        Some(TokenUrl::new(token_url).unwrap()),
-    )
-    .set_redirect_uri(RedirectUrl::new(CALLBACK_URL.clone()).unwrap());
+        BasicClient::new(
+            ClientId::new(self.config.client_id.clone()),
+            Some(ClientSecret::new(self.config.client_secret.clone())),
+            AuthUrl::new(auth_url).unwrap(),
+            Some(TokenUrl::new(token_url).unwrap()),
+        )
+        .set_redirect_uri(RedirectUrl::new(self.config.callback_url.clone()).unwrap())
+    }
 
-    let token_result = client
-        .exchange_code(AuthorizationCode::new(query.code.clone()))
-        .set_pkce_verifier(PkceCodeVerifier::new(stored_pkce))
-        .request_async(async_http_client)
-        .await;
+    pub fn generate_pkce(&self) -> (PkceCodeChallenge, PkceCodeVerifier) {
+        PkceCodeChallenge::new_random_sha256()
+    }
 
-    let token_response = match token_result {
-        Ok(t) => t,
-        Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to exchange code: {e}"),
-            ))
+    pub fn build_authorize_url(
+        &self,
+        client: &BasicClient,
+        pkce_challenge: PkceCodeChallenge,
+    ) -> (String, CsrfToken, String) {
+        let csrf_token = CsrfToken::new_random();
+        let session_id = Uuid::new_v4().to_string();
+
+        let combined_state_value = format!("{}|{}", session_id, csrf_token.secret());
+        let combined_state = CsrfToken::new(combined_state_value);
+
+        let (authorize_url, _) = client
+            .authorize_url(|| combined_state.clone())
+            .set_pkce_challenge(pkce_challenge)
+            .add_scope(Scope::new("openid".to_string()))
+            .url();
+        (authorize_url.to_string(), csrf_token, session_id)
+    }
+
+    pub fn validate_token(&self, state: &str) -> Result<(String, String), (StatusCode, String)> {
+        let parts: Vec<&str> = state.split('|').collect();
+
+        if parts.len() != 2 {
+            return Err((StatusCode::BAD_REQUEST, "Invalid state format".into()));
         }
-    };
 
-    let access_token = token_response.access_token().secret().to_owned();
+        let session_id = parts[0].to_string();
+        let csrf_token = parts[1].to_string();
 
-    println!("Access token: {:?}", access_token);
-
-    let token_data = json!({
-        "access_token": access_token,
-    })
-    .to_string();
-
-    {
-        let mut sessions = app_state.sessions.lock().await;
-        sessions.insert(session_id.clone(), token_data);
+        Ok((session_id, csrf_token))
     }
-
-    Ok((jar, Redirect::to("/auth/protected")))
 }
 
-pub async fn protected(jar: PrivateCookieJar) -> impl IntoResponse {
-    println!("TODO LIST");
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionData {
+    pub session_id: String,
+    pub pkce_verifier: String,
+    pub csrf_state: String,
+    pub access_token: Option<String>,
+}
 
-    (StatusCode::OK, "protected").into_response()
+pub async fn create_session(redis_pool: &Pool, session_data: SessionData) -> RedisResult<String> {
+    let mut conn = redis_pool.get().await.unwrap();
+
+    let _: () = pipe()
+        .hset(
+            &session_data.session_id,
+            "csrf_state",
+            &session_data.csrf_state,
+        )
+        .hset(
+            &session_data.session_id,
+            "pkce_verifier",
+            &session_data.pkce_verifier,
+        )
+        .expire(&session_data.session_id, 900) // 15 min
+        .query_async(&mut conn)
+        .await?;
+
+    Ok(session_data.session_id)
+}
+
+pub async fn load_session_data(
+    redis_pool: &Pool,
+    session_id: &str,
+) -> RedisResult<Option<SessionData>> {
+    let mut conn = redis_pool.get().await.unwrap();
+
+    let data: HashMap<String, String> = conn.hgetall(session_id).await?;
+
+    if data.is_empty() {
+        return Ok(None);
+    }
+
+    let csrf_state = data
+        .get("csrf_state")
+        .cloned()
+        .ok_or_else(|| RedisError::from((ErrorKind::TypeError, "Missing csrf_state")))
+        .unwrap();
+    let pkce_verifier = data
+        .get("pkce_verifier")
+        .cloned()
+        .ok_or_else(|| RedisError::from((ErrorKind::TypeError, "Missing pkce_verifier")))
+        .unwrap();
+
+    let access_token = data.get("access_token").cloned();
+
+    Ok(Some(SessionData {
+        session_id: session_id.to_string(),
+        csrf_state,
+        pkce_verifier,
+        access_token,
+    }))
+}
+
+pub async fn update_session(
+    redis_pool: &Pool,
+    session_id: &str,
+    access_token: String,
+) -> Result<String, String> {
+    let mut conn = redis_pool.get().await.unwrap();
+
+    let data: Option<String> = conn.get(session_id.to_string()).await.unwrap();
+
+    if let Some(stored_data) = data {
+        let mut session_data: SessionData = match serde_json::from_str(&stored_data) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("Failed to deserialize session data: {e}")),
+        };
+
+        session_data.access_token = Some(access_token);
+
+        let serialized_session_data = match serde_json::to_string(&session_data) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("Failed to serialize updated session data: {e}")),
+        };
+
+        let result: Result<String, RedisError> = conn
+            .set(session_id.to_string(), serialized_session_data)
+            .await;
+
+        match result {
+            Ok(_) => {
+                info!("Updated session id = {}", session_id);
+                Ok(session_id.to_string())
+            }
+            Err(e) => Err(format!("Failed to update session: {e}")),
+        }
+    } else {
+        Err("Session data doesn't exist".to_string())
+    }
+}
+
+pub async fn destroy_session(redis_pool: &Pool, session_id: &str) -> Result<String, String> {
+    let mut conn = redis_pool.get().await.unwrap();
+
+    let result: Result<u64, RedisError> = conn.del(session_id.to_string()).await;
+
+    match result {
+        Ok(deleted) => {
+            if deleted > 0 {
+                info!("Destoryed session id: {}", session_id);
+                Ok(format!("Session ID: {} successfully destoryed", session_id))
+            } else {
+                Err(format!("Sesssion ID: {} doesn't exist", session_id))
+            }
+        }
+        Err(e) => Err(format!("Failed to destory session: {e}")),
+    }
 }
