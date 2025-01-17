@@ -33,6 +33,8 @@ async fn main() -> Result<(), io::Error> {
 
     let app_store = AppState::new();
 
+    info!("redis server url: {}", env::var("REDIS_URL").unwrap());
+
     let app = Router::new()
         .route("/", get(root))
         .route("/metrics", get(move || ready(metrics_handler.render())))
