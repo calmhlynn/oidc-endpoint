@@ -29,7 +29,6 @@ async fn main() -> Result<(), io::Error> {
     tracing_subscriber::fmt().init();
 
     info!("Starting the application...");
-    info!("redis server url: {}", env::var("REDIS_URL").unwrap());
     let metrics_handler = recorder_builder();
 
     let app_store = AppState::new();
