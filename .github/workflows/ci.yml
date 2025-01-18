@@ -47,11 +47,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
-      - name: Extract tag and branch info
+      - name: Extract latest tag and branch info
         id: tag_branch_info
         run: |
-          # GitHub Action Context Variables
-          tag=${GITHUB_REF_NAME}
+          # Get the latest Git tag
+          tag=$(git describe --tags --abbrev=0 || echo "no-tag")
           branch=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
           sanitized_branch=$(echo $branch | sed 's/[^a-zA-Z0-9_\.-]/-/g')
           echo "tag=$tag" >> $GITHUB_OUTPUT
@@ -78,12 +78,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
-      - name: Extract tag and branch info
+      - name: Extract latest tag and branch info
         id: tag_branch_info
         run: |
-          # GitHub Action Context Variables
-          tag=${GITHUB_REF_NAME}
-          branch=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
+          # Get the latest Git tag
+          tag=$(git describe --tags --abbrev=0 || echo "no-tag")
+          branch=${GITHUB_REF_NAME}
           sanitized_branch=$(echo $branch | sed 's/[^a-zA-Z0-9_\.-]/-/g')
           echo "tag=$tag" >> $GITHUB_OUTPUT
           echo "branch=$sanitized_branch" >> $GITHUB_OUTPUT
