@@ -1,0 +1,13 @@
+on: 
+  push:
+    tags:
+      - '*'
+jobs:
+  get-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: get tag of this repository
+        run: |
+          echo "Tag name from GITHUB_REF_NAME: $GITHUB_REF_NAME"
+          echo "Tag name from github.ref_name: ${{ github.ref_name }}"
+    
