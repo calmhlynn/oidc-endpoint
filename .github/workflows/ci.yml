@@ -46,13 +46,23 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Extract tag and branch info
+        id: tag_branch_info
+        run: |
+          # GitHub Action Context Variables
+          tag=${GITHUB_REF_NAME}
+          branch=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
+          sanitized_branch=$(echo $branch | sed 's/[^a-zA-Z0-9_\.-]/-/g')
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "branch=$sanitized_branch" >> $GITHUB_OUTPUT
 
       - uses: docker/build-push-action@v6
         name: build test for docker
         with:
           context: .
           push: false
-          tags: ${{ secrets.IMAGE_NAME }}:PR-${{ github.ref_name}}-${{ github.sha }}
+          tags: ${{ secrets.IMAGE_NAME }}:${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}
 
   
   docker-build-and-push:
@@ -67,11 +77,21 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
+          
+      - name: Extract tag and branch info
+        id: tag_branch_info
+        run: |
+          # GitHub Action Context Variables
+          tag=${GITHUB_REF_NAME}
+          branch=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
+          sanitized_branch=$(echo $branch | sed 's/[^a-zA-Z0-9_\.-]/-/g')
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "branch=$sanitized_branch" >> $GITHUB_OUTPUT
+          
       - uses: docker/build-push-action@v6
         name: build and push
         with:
           context: .
           push: true
-          tags: ${{ secrets.IMAGE_NAME }}:${{github.ref_name }}-${{ github.sha }}
+          tags: ${{ secrets.IMAGE_NAME }}:${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}
 
