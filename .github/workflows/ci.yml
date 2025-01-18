@@ -36,7 +36,7 @@ jobs:
   docker-build-test:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    needs: build-test
+    needs: rust-build-test
 
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +52,7 @@ jobs:
   docker-build-and-push:
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    needs: build-test
+    needs: rust-build-test
     steps:
       - uses: actions/checkout@v4
 
