@@ -28,7 +28,7 @@ jobs:
             $${{ runner.os }}-cargo-
 
       - name: Application build
-        run: cargo build --vetrbose
+        run: cargo build --verbose
 
       - name: Application tests
         run: cargo test --verbose
