@@ -29,8 +29,8 @@ async fn main() -> Result<(), io::Error> {
     tracing_subscriber::fmt().init();
 
     info!("Starting the application...");
-    let metrics_handler = recorder_builder();
 
+    let metrics_handler = recorder_builder();
     let app_store = AppState::new();
 
     let app = Router::new()
