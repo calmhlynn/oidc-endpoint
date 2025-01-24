@@ -108,6 +108,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ secrets.INFRA_REPO }}
+          token: ${{ secrets.ACCESS_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Extract latest tag and branch info
