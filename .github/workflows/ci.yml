@@ -9,7 +9,6 @@ on:
   pull_request:
     branches:
       - main
-      - 'v*.*.*'
 
 jobs:
   rust-build-test:
@@ -71,6 +70,7 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     needs: rust-build-test
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,4 +98,39 @@ jobs:
           context: .
           push: true
           tags: ${{ secrets.IMAGE_NAME }}:${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}
+
+  create-pr-for-version-update:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    needs: docker-build-and-push
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract latest tag and branch info
+        id: tag_branch_info
+        run: |
+          # Get the latest Git tag
+          tag=$(git describe --tags --abbrev=0 || echo "no-tag")
+          branch=${GITHUB_REF_NAME}
+          sanitized_branch=$(echo $branch | sed 's/[^a-zA-Z0-9_\.-]/-/g')
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "branch=$sanitized_branch" >> $GITHUB_OUTPUT
+
+      - uses: mikefarah/yq@master
+        name: Update image.tag of infra for this app
+        with:
+          cmd: yq '.image.tag = "${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}"' -i app/values.yaml
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.ACCESS_REPO_TOKEN }}
+          base: "main"
+          branch: "chore/update-docker-tag-${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}"
+          title: "chore: Update app image tag"
+          commit-message: "chore: update image.tag to ${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}"
+          author: "github-actions[bot]"
+
 
