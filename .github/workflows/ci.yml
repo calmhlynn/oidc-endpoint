@@ -133,6 +133,3 @@ jobs:
           branch: "chore/update-docker-tag-${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}"
           title: "chore: Update app image tag"
           commit-message: "chore: update image.tag to ${{ steps.tag_branch_info.outputs.tag }}-${{ steps.tag_branch_info.outputs.branch }}-${{ github.sha }}"
-          author: "github-actions[bot]"
-
-
