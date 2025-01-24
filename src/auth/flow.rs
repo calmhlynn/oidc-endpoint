@@ -1,7 +1,7 @@
 use oauth2::{
-    basic::BasicClient, reqwest::async_http_client, AuthUrl, AuthorizationCode, ClientId,
-    ClientSecret, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
-    TokenResponse, TokenUrl,
+    basic::BasicClient, reqwest, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    EndpointNotSet, EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken,
+    Scope, TokenResponse, TokenUrl,
 };
 use uuid::Uuid;
 
@@ -24,7 +24,9 @@ impl OidcFlow {
         )
     }
 
-    pub fn create_client(&self) -> BasicClient {
+    pub fn create_client(
+        &self,
+    ) -> BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet> {
         let auth_url = format!(
             "{}/realms/{}/protocol/openid-connect/auth",
             self.config.auth_server_url, self.config.realm
@@ -34,13 +36,11 @@ impl OidcFlow {
             self.config.auth_server_url, self.config.realm
         );
 
-        BasicClient::new(
-            ClientId::new(self.config.client_id.clone()),
-            Some(ClientSecret::new(self.config.client_secret.clone())),
-            AuthUrl::new(auth_url).unwrap(),
-            Some(TokenUrl::new(token_url).unwrap()),
-        )
-        .set_redirect_uri(RedirectUrl::new(self.config.callback_url.clone()).unwrap())
+        BasicClient::new(ClientId::new(self.config.client_id.clone()))
+            .set_client_secret(ClientSecret::new(self.config.client_secret.clone()))
+            .set_auth_uri(AuthUrl::new(auth_url).unwrap())
+            .set_token_uri(TokenUrl::new(token_url).unwrap())
+            .set_redirect_uri(RedirectUrl::new(self.config.callback_url.clone()).unwrap())
     }
 
     pub fn generate_pkce(&self) -> (PkceCodeChallenge, PkceCodeVerifier) {
@@ -49,7 +49,13 @@ impl OidcFlow {
 
     pub fn build_authorization_url(
         &self,
-        client: &BasicClient,
+        client: &BasicClient<
+            EndpointSet,
+            EndpointNotSet,
+            EndpointNotSet,
+            EndpointNotSet,
+            EndpointSet,
+        >,
         pkce_challenge: PkceCodeChallenge,
     ) -> (String, String, String) {
         let csrf_token = CsrfToken::new_random();
@@ -86,10 +92,16 @@ impl OidcFlow {
         pkce_verifier: String,
     ) -> Result<(String, String, u64), String> {
         let client = self.create_client();
+
+        let http_client = reqwest::ClientBuilder::new()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("Client should build");
+
         let result = client
             .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier))
-            .request_async(async_http_client)
+            .request_async(&http_client)
             .await;
 
         match result {
@@ -115,9 +127,13 @@ impl OidcFlow {
         refresh_token: &str,
     ) -> Result<(String, String, u64), String> {
         let client = self.create_client();
+        let http_client = reqwest::ClientBuilder::new()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("Client should build");
         let result = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .request_async(async_http_client)
+            .request_async(&http_client)
             .await;
 
         match result {
