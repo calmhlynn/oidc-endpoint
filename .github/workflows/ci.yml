@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - id: gather-info
+      - id: setup-image-tag
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             branch=${GITHUB_HEAD_REF}
@@ -34,9 +34,9 @@ jobs:
           echo "branch=$sanitized_branch" >> $GITHUB_OUTPUT
           echo "tag_branch_sha=$tag-$sanitized_branch-${{ github.sha }}" >> $GITHUB_OUTPUT
     outputs:
-      tag: ${{ steps.gather-info.outputs.tag }}
-      branch: ${{ steps.gather-info.outputs.branch }}
-      tag_branch_sha: ${{ steps.gather-info.outputs.tag_branch_sha }}
+      tag: ${{ steps.setup-image-tag.outputs.tag }}
+      branch: ${{ steps.setup-image-tag.outputs.branch }}
+      tag_branch_sha: ${{ steps.setup-image-tag.outputs.tag_branch_sha }}
 
   rust-build-test:
     runs-on: macos-latest
