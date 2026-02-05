@@ -28,4 +28,4 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.22"
 redis = {version = "1", features = ["tokio-comp"]}
 deadpool-redis = "0.22.0"
-time = "0.3.37"
+time = "0.3.47"
