@@ -9,7 +9,7 @@ license = "MIT"
 axum  = "0.8.1"
 axum-extra = { version = "0.12.0", features = ["typed-header", "cookie-private"] }
 chrono = "0.4.39"
-jsonwebtoken = {version = "10.2.0", features = ["rust_crypto"]}
+jsonwebtoken = {version = "10.3.0", features = ["rust_crypto"]}
 lazy_static = "1.5.0"
 metrics = { version = "0.24.1", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.0", default-features = false }
